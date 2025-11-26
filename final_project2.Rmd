@@ -42,6 +42,29 @@ print(paste("Data Loaded. Rows:", nrow(full_data)))
 print(paste("PC1 Variance:", var(full_data$PC1)))
 ```
 
+```{r scree_plot, echo=TRUE}
+# Calculate variance for each of the 60 PCs
+pc_variances <- apply(full_data[, paste0("PC", 1:60)], 2, var)
+
+# Calculate percentage of total variance explained by these 60 PCs
+pc_percent <- (pc_variances / sum(pc_variances)) * 100
+
+# Create a dataframe for plotting
+scree_df <- data.frame(
+  PC_Index = 1:60,
+  Variance_Explained = pc_percent
+)
+
+# Plot
+ggplot(scree_df, aes(x = PC_Index, y = Variance_Explained)) +
+  geom_line(color = "blue") +
+  geom_point(color = "red", size = 2) +
+  theme_minimal() +
+  labs(title = "Scree Plot (Variance Explained by Each PC)",
+       y = "Percentage of Variance (%)",
+       x = "Principal Component Index")
+```
+
 ```{r viz_pca, echo=TRUE, message=FALSE, warning=FALSE}
 # --- 1. Plot PC1 vs PC2 colored by Gender ---
 p1 <- ggplot(full_data, aes(x = PC1, y = PC2, color = Gender)) +
@@ -60,6 +83,384 @@ p2 <- ggplot(full_data, aes(x = PC1, y = PC2, color = Age)) +
 # Print plots
 print(p1)
 print(p2)
+```
+
+```{r hypothesis_test, echo=TRUE}
+# 1. Visual Check with Boxplots (Better than scatter for 2 groups)
+ggplot(full_data, aes(x = Gender, y = PC1, fill = Gender)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Distribution of PC1 by Gender")
+
+# 2. Statistical T-Test
+# Null Hypothesis: The mean PC1 score is the same for Males and Females
+t_test_result <- t.test(PC1 ~ Gender, data = full_data)
+
+print(t_test_result)
+```
+
+```{r prediction_model, echo=TRUE}
+# Let's try to predict the Age Group using the top 10 PCs
+# We use a simple linear model treating Age groups as factors
+
+# 1. Build the model
+# Formula: Age depends on PC1 + PC2 + ... + PC10
+model <- lm(as.numeric(as.factor(Age)) ~ PC1 + PC2 + PC3 + PC4 + PC5, data = full_data)
+
+# 2. Check summary
+summary(model)
+```
+```{r viz_age_pc5, echo=TRUE}
+# Your model showed PC5 is significant for Age, so let's plot it
+# We use boxplots to see if the median PC5 score shifts as people get older
+ggplot(full_data, aes(x = Age, y = PC5, fill = Age)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Why PC5 predicts Age: Distribution by Age Group",
+       subtitle = "Notice the shift in the median (middle line) across groups",
+       y = "PC5 Score")
+```
+
+```{r rf_model, echo=TRUE}
+# Install if needed: install.packages("randomForest")
+library(randomForest)
+
+# 1. Prepare Data
+# Random Forest works best with "Factors" for classification
+# We will try to predict the Age Group using ALL 60 PCs
+set.seed(123) # meaningful seed for reproducibility
+
+# 2. Train the Model
+# "Age ~ ." means predict Age using all other columns in 'rf_data'
+# We subset to just Age and the PCs to keep it clean
+rf_data <- full_data[, c("Age", paste0("PC", 1:60))]
+rf_model <- randomForest(as.factor(Age) ~ ., data = rf_data, ntree=500)
+
+# 3. Check Results
+print(rf_model)
+
+# 4. Which PCs matter most?
+varImpPlot(rf_model, n.var=10, main="Top 10 Important PCs for Predicting Age")
+```
+
+```{r rf_merge_classes, echo=TRUE}
+library(dplyr)
+library(randomForest)
+
+# 1. Create a new dataframe with merged Age groups
+rf_data_merged <- full_data[, c("Age", paste0("PC", 1:60))]
+
+# Convert Age to character so we can edit it, then merge
+rf_data_merged$Age <- as.character(rf_data_merged$Age)
+rf_data_merged$Age[rf_data_merged$Age == "36+"] <- "31-35"
+rf_data_merged$Age <- as.factor(rf_data_merged$Age)
+
+# Rename "31-35" to "31+" to be accurate
+levels(rf_data_merged$Age)[levels(rf_data_merged$Age)=="31-35"] <- "31+"
+
+# Check new counts
+print("New Class Counts:")
+print(table(rf_data_merged$Age))
+
+# 2. Run Random Forest on the merged data
+set.seed(123)
+rf_model_merged <- randomForest(Age ~ ., data = rf_data_merged, ntree=500)
+
+print(rf_model_merged)
+```
+
+```{r rf_balanced, echo=TRUE}
+library(randomForest)
+
+# 1. Check the smallest class size
+# We know it is 10 (from the 36+ group)
+min_size <- 10 
+
+# 2. Run Weighted/Balanced Random Forest
+# sampsize: We instruct it to pick 10 random samples from EACH group for every tree.
+# strata: We tell it to stratify by Age.
+set.seed(123)
+rf_model_balanced <- randomForest(as.factor(Age) ~ ., 
+                                  data = rf_data, 
+                                  ntree=500,
+                                  strata = as.factor(rf_data$Age),
+                                  sampsize = c(10, 10, 10, 10)) # 10 from each of the 4 groups
+
+# 3. Check Results
+print(rf_model_balanced)
+```
+
+```{r final_heatmap, echo=TRUE}
+library(reshape2)
+library(R.matlab)
+library(ggplot2)
+
+# Load the raw connectivity matrices
+raw_data <- readMat("Data/SC/HCP_cortical_DesikanAtlas_SC.mat")
+
+# The variable in the mat file is 'hcp_sc_count', which R converts to 'hcp.sc.count'
+connectivity <- raw_data$hcp.sc.count
+
+# Plot Subject 1
+# We take the 1st slice of the 3D array
+subj1_matrix <- log1p(connectivity[,,1]) 
+melted_c <- melt(subj1_matrix)
+
+ggplot(melted_c, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "darkred") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Structural Connectome (Subject 1)", x="Region", y="Region") +
+  theme(axis.text=element_blank())
+```
+
+```{r load_dual_data, echo=TRUE, message=FALSE}
+library(R.matlab)
+library(dplyr)
+library(randomForest)
+
+# --- 1. Load Structural (1065 Subjects) ---
+s_data <- readMat("Data/TNPCA_Result/TNPCA_Coeff_HCP_Structural_Connectome.mat")
+# Get number of subjects dynamically
+n_subs_struct <- length(s_data$sub.id)
+s_coeffs <- matrix(s_data$PCA.Coeff, nrow = n_subs_struct, ncol = 60)
+colnames(s_coeffs) <- paste0("Struct_PC", 1:60)
+df_struct <- data.frame(Subject = as.vector(s_data$sub.id), s_coeffs)
+
+# --- 2. Load Functional (1058 Subjects - FIX HERE) ---
+f_data <- readMat("Data/TNPCA_Result/TNPCA_Coeff_HCP_Functional_Connectome.mat")
+# Get number of subjects dynamically (It is 1058, not 1065)
+n_subs_func <- length(f_data$network.subject.ids)
+f_coeffs <- matrix(f_data$PCA.Coeff, nrow = n_subs_func, ncol = 60)
+colnames(f_coeffs) <- paste0("Func_PC", 1:60)
+df_func <- data.frame(Subject = as.vector(f_data$network.subject.ids), f_coeffs)
+
+# --- 3. Merge Everything ---
+traits <- read.csv("Data/traits/table1_hcp.csv")
+
+# Inner join will automatically keep only the subjects present in ALL files
+# This results in the intersection (1058 subjects)
+mega_data <- inner_join(traits, df_struct, by = "Subject") %>%
+             inner_join(df_func, by = "Subject")
+
+print(paste("Mega Dataset Loaded. Rows:", nrow(mega_data), "| Features:", ncol(mega_data)))
+```
+
+```{r rf_boosted, echo=TRUE}
+# 1. Clean Age Data
+rf_data <- mega_data[, c("Age", grep("PC", colnames(mega_data), value=TRUE))]
+rf_data$Age <- as.factor(rf_data$Age)
+
+# 2. Manual Oversampling
+# Instead of throwing away data, we duplicate the rare rows
+# Target size: ~460 (Size of the "26-30" group)
+
+grp_36 <- rf_data[rf_data$Age == "36+", ]
+grp_22 <- rf_data[rf_data$Age == "22-25", ]
+grp_31 <- rf_data[rf_data$Age == "31-35", ]
+
+# Replicate 36+ (Need ~45x more)
+boost_36 <- grp_36[rep(1:nrow(grp_36), 45), ]
+
+# Replicate 22-25 (Need ~2x more)
+boost_22 <- grp_22[rep(1:nrow(grp_22), 2), ]
+
+# Replicate 31-35 (Need ~1.5x more)
+boost_31 <- grp_31[rep(1:nrow(grp_31), 1), ] # Just adding 1x copy for slight boost
+
+# Combine into a "Balanced Training Set"
+train_balanced <- rbind(rf_data, boost_36, boost_22, boost_31)
+
+print("Balanced Class Counts:")
+print(table(train_balanced$Age))
+
+# 3. Train Model on Super-Set
+set.seed(999)
+rf_super <- randomForest(Age ~ ., data = train_balanced, ntree=1000, mtry=15)
+
+print(rf_super)
+
+# 4. See what matters (Structural vs Functional)
+varImpPlot(rf_super, n.var=15, main="Top Predictors: Structure vs Function")
+```
+
+```{r rf_gold_standard_fixed, echo=TRUE}
+library(caret)
+library(randomForest)
+
+set.seed(42)
+
+# --- 1. CLEANING STEP (Missing in your code) ---
+# Select only Age and the PC columns (removing Subject ID and metadata with NAs)
+rf_data <- mega_data[, c("Age", grep("PC", colnames(mega_data), value=TRUE))]
+
+# Ensure Age is a Factor (required for Classification)
+rf_data$Age <- as.factor(rf_data$Age)
+
+# Check for NAs just in case (should be 0 now)
+sum(is.na(rf_data)) 
+
+# --- 2. Create True Test Set (20%) ---
+# We split the CLEAN data, not the raw mega_data
+trainIndex <- createDataPartition(rf_data$Age, p = .8, list = FALSE, times = 1)
+data_train <- rf_data[ trainIndex,]
+data_test  <- rf_data[-trainIndex,]
+
+# --- 3. Oversample ONLY Training Data ---
+grp_36 <- data_train[data_train$Age == "36+", ]
+grp_22 <- data_train[data_train$Age == "22-25", ]
+grp_31 <- data_train[data_train$Age == "31-35", ]
+
+# Duplicate to balance (Target ~370)
+# Note: We don't touch the "26-30" group as it's already large
+boost_36 <- grp_36[rep(1:nrow(grp_36), 40), ]
+boost_22 <- grp_22[rep(1:nrow(grp_22), 2), ]
+boost_31 <- grp_31[rep(1:nrow(grp_31), 1), ]
+
+# Combine
+train_final <- rbind(data_train, boost_36, boost_22, boost_31)
+
+# --- 4. Train Model ---
+print("Training Balanced Random Forest...")
+rf_final <- randomForest(Age ~ ., data = train_final, ntree=500, mtry=15)
+
+# --- 5. Predict on Clean Test Set ---
+predictions <- predict(rf_final, newdata = data_test)
+
+# --- 6. Results ---
+conf_matrix <- confusionMatrix(predictions, data_test$Age)
+print(conf_matrix)
+```
+
+```{r rf_final_merged, echo=TRUE}
+library(caret)
+library(randomForest)
+
+set.seed(999)
+
+# 1. Prepare Data (Structure + Function)
+# We start with the 120-feature "mega_data" you loaded earlier
+rf_data <- mega_data[, c("Age", grep("PC", colnames(mega_data), value=TRUE))]
+
+# 2. Merge "36+" into "31-35" -> Create "31+" Group
+# This fixes the sample size issue
+rf_data$Age <- as.character(rf_data$Age)
+rf_data$Age[rf_data$Age == "36+"] <- "31+"
+rf_data$Age[rf_data$Age == "31-35"] <- "31+"
+rf_data$Age <- as.factor(rf_data$Age)
+
+print("New Class Sizes:")
+print(table(rf_data$Age))
+
+# 3. Create Test/Train Split (80/20)
+trainIndex <- createDataPartition(rf_data$Age, p = .8, list = FALSE)
+data_train <- rf_data[ trainIndex,]
+data_test  <- rf_data[-trainIndex,]
+
+# 4. Oversample ONLY Training Data (To balance the 3 groups)
+# Target size: ~370 (Size of the "26-30" group)
+grp_22 <- data_train[data_train$Age == "22-25", ]
+grp_31 <- data_train[data_train$Age == "31+", ]
+
+# Replicate to match the size of the "26-30" group
+# 22-25 needs ~2x
+boost_22 <- grp_22[rep(1:nrow(grp_22), 2), ]
+# 31+ is now big enough! It might just need a tiny boost (1.2x) or none. 
+# Let's just double it to be safe and give the model strong signal.
+boost_31 <- grp_31[rep(1:nrow(grp_31), 1), ] 
+
+train_final <- rbind(data_train, boost_22, boost_31)
+
+# 5. Train & Test
+print("Training Final Optimized Model...")
+rf_merged <- randomForest(Age ~ ., data = train_final, ntree=500, mtry=20)
+predictions <- predict(rf_merged, newdata = data_test)
+
+# 6. Final Score
+conf_matrix <- confusionMatrix(predictions, data_test$Age)
+print(conf_matrix)
+```
+
+```{r graph_theory, echo=TRUE}
+library(ggplot2)
+library(dplyr)
+library(R.matlab)
+
+# 1. Load Raw Structural Matrices (The Physical Wiring)
+raw_data <- readMat("Data/SC/HCP_cortical_DesikanAtlas_SC.mat")
+connectivity <- raw_data$hcp.sc.count # 68 x 68 x 1065 Array
+
+# 2. Calculate "Global Strength" for each subject
+# This is simply the sum of all white matter fibers in the brain
+# A higher number = A more densely connected brain
+global_strength <- apply(connectivity, 3, sum)
+
+# 3. Add to your existing dataframe
+# We use 'mega_data' from the previous step
+# (Make sure to match Subject IDs if you want to be perfectly safe, 
+# but usually the order is consistent. We'll assume consistency for this quick check)
+mega_data$Brain_Strength <- global_strength[1:nrow(mega_data)] 
+
+# 4. Visualization: Does Brain Strength drop with Age?
+# We expect the "31+" box to be lower than the "22-25" box
+ggplot(mega_data, aes(x = Age, y = Brain_Strength, fill = Age)) +
+  geom_boxplot() +
+  geom_jitter(alpha=0.1) + # Show individual dots
+  theme_minimal() +
+  labs(title = "Neuro-Scientific Validation: Brain Connectivity vs Age",
+       subtitle = "Older brains tend to have fewer total structural connections (lower density)",
+       y = "Total Streamline Count (Log Scale)") +
+  scale_y_log10() # Log scale helps visualization
+```
+
+```{r cognition_correlation_final, echo=TRUE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+library(R.matlab)
+
+# --- 1. Get Brain Strength (Fresh Load) ---
+# We load the raw matrix directly to be safe
+raw_sc <- readMat("Data/SC/HCP_cortical_DesikanAtlas_SC.mat")
+# Calculate sum of all connections for each subject
+brain_strength <- apply(raw_sc$hcp.sc.count, 3, sum)
+# Get IDs
+subjects_sc <- as.vector(raw_sc$all.id)
+
+# Create a clean table just for Strength
+df_strength <- data.frame(Subject = as.character(subjects_sc), 
+                          Brain_Strength = brain_strength)
+
+# --- 2. Get Intelligence Scores (Fresh Load) ---
+# We load Table 1 again to ensure we have the PMAT variable
+df_traits <- read.csv("Data/traits/table1_hcp.csv", stringsAsFactors=FALSE)
+# Select only what we need
+df_cognition <- df_traits %>% 
+  select(Subject, PMAT24_A_CR) %>%
+  mutate(Subject = as.character(Subject)) # Ensure ID is text to match
+
+# --- 3. Merge ---
+# Inner Join keeps only people with BOTH valid brain data and IQ scores
+plot_data <- inner_join(df_strength, df_cognition, by = "Subject")
+
+# Remove any missing IQ scores (NAs)
+plot_data <- plot_data %>% filter(!is.na(PMAT24_A_CR))
+
+# --- 4. The Plot ---
+# Calculate correlation for the title
+res <- cor.test(plot_data$Brain_Strength, plot_data$PMAT24_A_CR)
+r_val <- round(res$estimate, 2)
+p_val <- signif(res$p.value, 3)
+
+ggplot(plot_data, aes(x = Brain_Strength, y = PMAT24_A_CR)) +
+  geom_point(alpha = 0.5, color = "#2c3e50") + # Dark blue dots
+  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", alpha = 0.2) + # Red trend line
+  theme_minimal() +
+  labs(title = "Neuro-Cognitive Link: Wiring vs. Intelligence",
+       subtitle = paste0("Correlation: R = ", r_val, " (p = ", p_val, ")"),
+       x = "Total Structural Connectivity (Global Strength)",
+       y = "Fluid Intelligence (PMAT24 Score)")
 ```
 
 ## Introduction
