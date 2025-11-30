@@ -298,3 +298,69 @@ print(paste("Accuracy:", round(conf_matrix$overall["Accuracy"], 4)))
 
 
 
+```{r}
+library(dplyr)
+library(xgboost)
+library(caret)
+library(ggplot2)
+
+# Select Data
+# We select Gender plus specific Anatomy and Connectivity features
+# This implicitly excludes Total Brain Volume and physical traits
+neuro_data <- full_data %>%
+  select(
+    Gender,
+    starts_with("PC"),          # Structural Connectivity
+    starts_with("Func_PC"),     # Functional Connectivity
+    starts_with("FS_L_"),       # Left Hemisphere Anatomy
+    starts_with("FS_R_")        # Right Hemisphere Anatomy
+  ) %>%
+  na.omit()
+
+# Prepare Matrix and Labels
+# Convert Gender F/M to 0/1
+data_y <- as.numeric(as.factor(neuro_data$Gender)) - 1
+data_x <- neuro_data %>% select(-Gender) %>% as.matrix()
+
+# Split Data
+# We use 70 percent for training and 30 percent for testing
+set.seed(123)
+train_index <- createDataPartition(data_y, p = 0.7, list = FALSE)
+
+dtrain <- xgb.DMatrix(data = data_x[train_index, ], label = data_y[train_index])
+dtest  <- xgb.DMatrix(data = data_x[-train_index, ], label = data_y[-train_index])
+
+# Train XGBoost
+# We use a binary logistic objective for classification
+params <- list(
+  objective = "binary:logistic",
+  max_depth = 4,
+  eta = 0.1,
+  eval_metric = "error"
+)
+
+# Train for 200 rounds
+model_xgb <- xgboost(data = dtrain, params = params, nrounds = 200, verbose = 0)
+
+# Evaluate on Test Set
+# Predict probabilities and convert to class labels
+pred_probs <- predict(model_xgb, dtest)
+pred_labels <- ifelse(pred_probs > 0.5, 1, 0)
+
+# Generate Confusion Matrix
+# Map 0/1 back to original Factor levels for clarity
+actual_labels <- factor(data_y[-train_index], levels = c(0, 1), labels = c("F", "M"))
+predicted_labels <- factor(pred_labels, levels = c(0, 1), labels = c("F", "M"))
+
+conf_matrix <- confusionMatrix(predicted_labels, actual_labels)
+
+# Print Accuracy
+print(conf_matrix$overall["Accuracy"])
+
+# Plot Feature Importance
+# This shows which specific brain regions or networks drive the prediction
+importance <- xgb.importance(model = model_xgb)
+xgb.plot.importance(importance, top_n = 20, measure = "Gain", main = "Biomarkers: Anatomy vs Connectivity")
+```
+
+
