@@ -1,2 +1,4 @@
 # Ignore the data csv
 Data/full_data.csv
+Data/raw_struct_pca.csv
+Data/raw_func_pca.csv
