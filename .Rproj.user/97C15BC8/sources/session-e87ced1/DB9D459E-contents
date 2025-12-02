@@ -60,4 +60,158 @@ write.csv(mega_data, "Data/full_data.csv")
 full_data <- read.csv("Data/full_data.csv")
 ```
 
+```{r build_cog_sc_fc_y}
+library(readxl)
+library(dplyr)
+
+traits_meta <- read_excel("Data/traits/175traits/Details_175_Traits.xlsx")
+
+cog_vars_all <- traits_meta %>%
+  filter(Category == "Cognition") %>%
+  pull(Column_Header) %>%
+  unique()
+
+su_vars_all <- traits_meta %>%
+  filter(Category == "Substance Use") %>%
+  pull(Column_Header) %>%
+  unique()
+
+# Keep only those that actually exist in full_data
+cog_vars <- intersect(cog_vars_all, names(full_data))
+su_vars  <- intersect(su_vars_all,  names(full_data))
+
+# get PC1 scores for a set of columns
+get_pc1 <- function(df, cols) {
+  cols <- intersect(cols, names(df))
+  if (length(cols) == 0) {
+    return(rep(NA_real_, nrow(df)))
+  }
+  x <- df[, cols, drop = FALSE]
+  # Drop all-NA columns
+  non_all_na <- colSums(!is.na(x)) > 0
+  x <- x[, non_all_na, drop = FALSE]
+  if (ncol(x) == 0) {
+    return(rep(NA_real_, nrow(df)))
+  }
+  # Median-impute NAs per column
+  for (j in seq_len(ncol(x))) {
+    nas <- is.na(x[, j])
+    if (any(nas)) {
+      med <- median(x[, j], na.rm = TRUE)
+      x[nas, j] <- med
+    }
+  }
+  # PCA on standardized columns
+  pc <- prcomp(x, center = TRUE, scale. = TRUE)
+  score <- pc$x[, 1]  # PC1 scores
+  return(score)
+}
+
+# Group substance-use variables by domain
+alc_vars <- su_vars[grepl("^SSAGA_Alc_", su_vars)]
+tob_vars <- su_vars[grepl("^SSAGA_TB_", su_vars) | grepl("Tobacco", su_vars)]
+mj_vars  <- su_vars[grepl("^SSAGA_Mj_", su_vars)]
+other_vars <- su_vars[
+  grepl("Times_Used_Illicits", su_vars) |
+    grepl("Times_Used_Cocaine", su_vars) |
+    grepl("Times_Used_Hallucinogens", su_vars) |
+    grepl("Times_Used_Opiates", su_vars) |
+    grepl("Times_Used_Sedatives", su_vars) |
+    grepl("Times_Used_Stimulants", su_vars)
+]
+
+# Domain-specific severity scores
+full_data$Y_alcohol  <- get_pc1(full_data, alc_vars)
+full_data$Y_tobacco  <- get_pc1(full_data, tob_vars)
+full_data$Y_cannabis <- get_pc1(full_data, mj_vars)
+full_data$Y_other    <- get_pc1(full_data, other_vars)
+
+# General substance-use severity: PC1 over ALL substance-use variables
+full_data$Y_general  <- get_pc1(full_data, su_vars)
+
+full_data <- full_data %>%
+  filter(!(is.na(Y_alcohol) & is.na(Y_tobacco) &
+           is.na(Y_cannabis) & is.na(Y_other) &
+           is.na(Y_general)))
+
+struct_cols <- grep("^Struct_PC", names(full_data), value = TRUE)
+func_cols   <- grep("^Func_PC",   names(full_data), value = TRUE)
+
+# Keep: Subject, covariates, cognition, raw SU, SC PCs, FC PCs, Y_* and Y_general
+
+covar_cols <- c("Gender", "Age_in_Yrs", "SSAGA_Educ", "SSAGA_Income")
+covar_cols <- covar_cols[covar_cols %in% names(full_data)]  # only keep those that exist
+
+final_cols <- c(
+  "Subject",
+  covar_cols,
+  cog_vars,
+  su_vars,                 # all raw SU variables
+  struct_cols,
+  func_cols,
+  "Y_alcohol", "Y_tobacco", "Y_cannabis", "Y_other", "Y_general"
+)
+
+cog_sc_fc_y <- full_data %>%
+  dplyr::select(all_of(final_cols))
+
+```
+
+```{r}
+# Save to CSV
+write.csv(cog_sc_fc_y, "Data/cog_sc_fc_y.csv", row.names = FALSE)
+```
+
+```{r add_Y_general}
+library(readxl)
+library(dplyr)
+
+cog_sc_fc_y <- read.csv("Data/cog_sc_fc_y.csv")
+traits_meta <- read_excel("Data/traits/175traits/Details_175_Traits.xlsx")
+
+su_vars_all <- traits_meta %>%
+  filter(Category == "Substance Use") %>%
+  pull(Column_Header) %>%
+  unique()
+
+# Keep only those that actually exist in cog_sc_fc_y
+su_vars <- intersect(su_vars_all, names(cog_sc_fc_y))
+
+# 3. Helper to compute PC1 across given columns
+get_pc1 <- function(df, cols) {
+  cols <- intersect(cols, names(df))
+  if (length(cols) == 0) {
+    return(rep(NA_real_, nrow(df)))
+  }
+  x <- df[, cols, drop = FALSE]
+  # Drop all-NA columns
+  non_all_na <- colSums(!is.na(x)) > 0
+  x <- x[, non_all_na, drop = FALSE]
+  if (ncol(x) == 0) {
+    return(rep(NA_real_, nrow(df)))
+  }
+  # Median-impute NAs per column
+  for (j in seq_len(ncol(x))) {
+    nas <- is.na(x[, j])
+    if (any(nas)) {
+      med <- median(x[, j], na.rm = TRUE)
+      x[nas, j] <- med
+    }
+  }
+  # PCA on standardized columns
+  pc <- prcomp(x, center = TRUE, scale. = TRUE)
+  score <- pc$x[, 1]  # PC1
+  return(score)
+}
+
+# 4. Compute general substance-use severity score
+cog_sc_fc_y$Y_general <- get_pc1(cog_sc_fc_y, su_vars)
+
+summary(cog_sc_fc_y$Y_general)
+
+# 5. Save back to the same CSV (or change name if you prefer a new file)
+write.csv(cog_sc_fc_y, "Data/cog_sc_fc_y.csv", row.names = FALSE)
+cat("Updated cog_sc_fc_y.csv with Y_general column.\n")
+
+```
 
