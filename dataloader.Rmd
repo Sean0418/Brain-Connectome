@@ -7,6 +7,8 @@ output: html_document
 
 # Combining Traits, Functional Connectome PCs, and Structural Connectome PCs
 
+SHOULD RUN `pca-vae.Rmd` first, then run this to get the data
+
 ```{r}
 library(R.matlab)
 library(dplyr)
@@ -32,11 +34,22 @@ df_func <- data.frame(Subject = as.vector(f_data$network.subject.ids), f_coeffs)
 traits1 <- read.csv("Data/traits/table1_hcp.csv")
 traits2 <- read.csv("Data/traits/table2_hcp.csv")
 
+# Should run pca-vae.rmd first
+# Get PCA and VAE data
+vae_df <- read.csv("Data/vae_df.csv")
+raw_pca_df <- read.csv("Data/raw_pca_df.csv")
+
+
 # Inner join will automatically keep only the subjects present in ALL files
 # This results in the intersection (1058 subjects)
 mega_data <- inner_join(traits1, traits2, by = "Subject") %>%
              inner_join(df_struct, by = "Subject") %>%
-             inner_join(df_func, by = "Subject")
+             inner_join(df_func, by = "Subject") %>%
+  inner_join(vae_df, by = "Subject") %>%
+  inner_join(raw_pca_df, by = "Subject") %>%
+
+
+
 
 print(paste("Mega Dataset Loaded. Rows:", nrow(mega_data), "| Features:", ncol(mega_data)))
 write.csv(mega_data, "Data/full_data.csv")

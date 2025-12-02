@@ -150,11 +150,15 @@ colnames(my_func_df)[2:61] <- paste0("Raw_Func_PC", 1:60)
 print("Functional PCA Complete.")
 ```
 
-
+# Write PCA data to csv
 
 ```{r}
 write.csv(my_struct_df, "Data/raw_struct_pca.csv")
 write.csv(my_func_df, "Data/raw_func_pca.csv")
+
+pca_df <- my_struct_df %>% 
+  inner_join(my_func_df, by="Subject")
+write.csv(pca_df, "Data/raw_pca_df.csv", row.names = FALSE)
 ```
 
 
