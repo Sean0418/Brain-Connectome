@@ -85,6 +85,63 @@ my_struct_df <- data.frame(Subject = sc_ids, sc_pca$x)
 colnames(my_struct_df)[2:61] <- paste0("Raw_Struct_PC", 1:60)
 ```
 
+
+
+```{r}
+# 1. Get the variance explained by each principal component
+# The sdev component of the prcomp object contains the standard deviations
+# We square them to get the variance
+pca_variances <- sc_pca$sdev^2
+
+# 2. Calculate the total variance in the dataset
+# This is the sum of the variances of all principal components
+# (Or the sum of the variances of the original scaled columns)
+total_variance <- sum(pca_variances)
+
+# 3. Calculate the percentage of variance explained by each PC
+percent_variance <- pca_variances / total_variance
+
+# 4. Calculate the cumulative variance explained
+cumulative_variance <- cumsum(percent_variance)
+
+# 5. Extract the variance explained by the top 60 components
+# Since rank. = 60, sc_pca only returns the top 60 components
+# But prcomp calculates sdev for ALL components unless truncated manually elsewhere?
+# Wait, prcomp with rank. returns only the top components in rotation/x,
+# but let's check sdev length.
+# If sdev length is limited to 60, total_variance calculation above is WRONG
+# because we're missing the tail.
+
+# CORRECT APPROACH FOR TRUNCATED PCA:
+# We need the Total Variance of the original matrix to be the denominator.
+
+# Calculate Total Variance of the cleaned, scaled data
+# Since scale.=TRUE, every column has variance = 1.
+# Total Variance = Number of Columns (Features)
+n_columns <- ncol(sc_flat_clean)
+true_total_variance <- n_columns
+
+# Recalculate percent explained using the TRUE total
+# We use the top 60 variances from the model
+top_60_variances <- sc_pca$sdev[1:60]^2
+variance_explained_top60 <- sum(top_60_variances)
+
+percent_explained_top60 <- variance_explained_top60 / true_total_variance
+
+# Output the result
+print(paste("Number of Features:", n_columns))
+print(paste("Total Variance (Theoretical):", n_columns))
+print(paste("Variance Captured by Top 60 PCs:", round(variance_explained_top60, 2)))
+print(paste("Percent Variance Explained by Top 60:", round(percent_explained_top60 * 100, 2), "%"))
+
+# Optional: Scree Plot to verify
+plot(head(percent_variance, 60), type = "b", 
+     main = "Scree Plot: Variance Explained by Vector PCA",
+     xlab = "Principal Component", ylab = "Proportion of Variance")
+```
+
+
+
 ## Functional Connectome
 
 ```{r func}
@@ -149,6 +206,61 @@ colnames(my_func_df)[2:61] <- paste0("Raw_Func_PC", 1:60)
 
 print("Functional PCA Complete.")
 ```
+
+```{r}
+# --- FUNCTIONAL CONNECTOME PCA VARIANCE ESTIMATION ---
+
+# Check if the PCA model exists
+if (!exists("fc_pca")) {
+  stop("Error: 'fc_pca' object not found. Please run the Functional PCA step first.")
+}
+
+# 1. Get Variances of the Principal Components
+# sdev contains the standard deviations of the principal components
+# We square them to get the variance of each PC
+fc_pca_variances <- fc_pca$sdev^2
+
+# 2. Calculate Total Variance (Theoretical)
+# Since you used scale. = TRUE, every column was forced to have a variance of 1.0.
+# Therefore, the Total Variance is simply the number of valid features (columns).
+# We use the number of columns in the cleaned data used for PCA
+n_features_func <- ncol(fc_flat_final)
+total_func_variance <- n_features_func
+
+# 3. Calculate Variance Captured by Top 60 PCs
+# We sum the variances of the first 60 components
+# (Note: prcomp usually returns all components unless rank. was strict, but we check)
+top_60_func_variance <- sum(fc_pca_variances[1:60])
+
+# 4. Calculate Percentage Explained
+percent_explained_func <- top_60_func_variance / total_func_variance
+
+
+print(paste("Number of Functional Features:", n_features_func))
+print(paste("Total Variance (Theoretical):", n_features_func))
+print(paste("Variance Captured by Top 60 PCs:", round(top_60_func_variance, 2)))
+print(paste("Percent Variance Explained by Top 60:", round(percent_explained_func * 100, 2), "%"))
+
+# --- Visual Scree Plot ---
+# We calculate the proportion for the top 60 to visualize the drop-off
+scree_data_func <- data.frame(
+  PC = 1:60,
+  Variance = fc_pca_variances[1:60],
+  Proportion = fc_pca_variances[1:60] / total_func_variance
+)
+
+library(ggplot2)
+ggplot(scree_data_func, aes(x = PC, y = Proportion)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Functional PCA Scree Plot",
+       subtitle = "Variance Explained per Component",
+       y = "Proportion of Total Variance") +
+  theme_minimal()
+```
+
+
+
 
 # Write PCA data to csv
 
@@ -310,8 +422,15 @@ for (epoch in 1:num_epochs) {
     # Better: Divide MSE by Total Sum of Squares (TSS) of the data subset
     
     # Calculate Total Sum of Squares for Train and Test sets
-    train_tss <- sum((as.matrix(train_tensor) - mean(as.matrix(train_tensor)))^2)
-    test_tss  <- sum((as.matrix(test_tensor)  - mean(as.matrix(test_tensor)))^2)
+    train_data_mat <- as.matrix(train_tensor)
+    test_data_mat <- as.matrix(test_tensor)
+    
+    train_var_actual <- var(c(train_data_mat))  # Variance of ALL values
+    test_var_actual <- var(c(test_data_mat))
+    
+    # TSS = Variance * (n-1)
+    train_tss <- train_var_actual * (nrow(train_data_mat) * ncol(train_data_mat) - 1)
+    test_tss <- test_var_actual * (nrow(test_data_mat) * ncol(test_data_mat) - 1)
     
     train_norm_loss <- train_loss_sum / train_tss
     test_norm_loss  <- test_loss_sum  / test_tss
@@ -320,8 +439,10 @@ for (epoch in 1:num_epochs) {
     test_loss_norm_history[epoch]  <- test_norm_loss
     
     if (epoch %% 10 == 0) {
-      cat(sprintf("Epoch %d | Norm Train Loss: %.4f | Norm Test Loss: %.4f\n", 
-                  epoch, train_norm_loss, test_norm_loss))
+      train_r2 <- 1 - train_norm_loss
+      test_r2 <- 1 - test_norm_loss
+      cat(sprintf("Epoch %d | R² Train: %.3f (Loss: %.3f) | R² Test: %.3f (Loss: %.3f)\n", 
+                  epoch, train_r2, train_norm_loss, test_r2, test_norm_loss))
     }
   }
 }
@@ -338,9 +459,9 @@ ggplot(history_norm_df, aes(x = Epoch, y = NormalizedLoss, color = Type)) +
   geom_line(size = 1) +
   scale_y_continuous(limits = c(0, 1)) + # Force 0-1 scale
   scale_color_manual(values = c("Train" = "#1f77b4", "Test" = "#d62728")) +
-  labs(title = "VAE Normalized Learning Curve",
-       subtitle = "Proportion of Unexplained Variance",
-       y = "Normalized Loss (1 - R^2)") +
+  labs(title = "VAE Learning Curve: Unexplained Variance",
+     subtitle = "Lower = Better (More variance captured by latent space)",
+     y = "Proportion of Unexplained Variance (1 - R²)") +
   theme_minimal()
 
 
@@ -419,7 +540,7 @@ library(dplyr)
 library(ggplot2)
 library(tidyr)
 
-# GIGACHAD REPRODUCIBILITY BLOCK
+
 set.seed(123)
 torch_manual_seed(123)
 
@@ -611,6 +732,40 @@ vae_scores_func <- as.matrix(final_out_func[[2]])
 vae_func_df <- data.frame(Subject = fc_ids_clean, vae_scores_func)
 colnames(vae_func_df)[2:(latent_dim+1)] <- paste0("VAE_Func_LD", 1:latent_dim)
 ```
+
+
+```{r}
+library(torch)
+
+model_func$eval()
+with_no_grad({
+  output <- model_func(test_tensor_func)
+  recon_log_scaled <- as.matrix(output[[1]]) # Prediction (0-1)
+  actual_log_scaled <- as.matrix(test_tensor_func) # Truth (0-1)
+})
+
+# Inverse Transform: Go back to Original Functional Strength
+# Step A: Un-normalize (multiply by max_val_func)
+# Step B: Inverse Log (expm1 is the inverse of log1p)
+recon_raw  <- expm1(recon_log_scaled * max_val_func)
+actual_raw <- expm1(actual_log_scaled * max_val_func)
+
+# Calculate "Loss" on Original Scale (Mean Squared Error)
+mse_raw <- mean((recon_raw - actual_raw)^2)
+rmse_raw <- sqrt(mse_raw)
+
+# Calculate Variance Explained (R-Squared) on Original Scale
+# This compares your error to the total variety of functional strengths
+total_variance_raw <- var(as.vector(actual_raw))
+r2_raw <- 1 - (mse_raw / total_variance_raw)
+
+print(paste("Average Error (RMSE):", round(rmse_raw, 4), "strength units"))
+print(paste("Variance Explained (R2):", round(r2_raw * 100, 2), "%"))
+```
+
+
+
+
 
 
 To extract non-linear biomarkers, we utilized the encoder network of our trained Variational Autoencoder (VAE) to map each subject's high-dimensional connectome (2,278 features) into a lower-dimensional latent distribution. The encoder defines this distribution using two learned parameters for each dimension: a mean ($\mu$) representing the coordinate center, and a variance ($\sigma$) representing uncertainty. While $\sigma$ is used during training to enforce manifold smoothness via stochastic sampling, it primarily captures noise and reconstruction ambiguity. Therefore, for downstream analysis, we discarded the uncertainty term and extracted the deterministic mean vector ($\mu$) as the final subject representation. These values function analogously to Principal Component scores, providing a stable, denoised summary of the intrinsic topological structure of each brain.
