@@ -1,79 +1,143 @@
-# Brain Connectome Analysis
+# Brain Connectome
 
-Analysis of brain structural and functional connectomes from the Human Connectome Project (HCP) to study relationships between brain connectivity and human traits.
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-## Project Overview
+A Python package for analyzing brain structural and functional connectomes from the Human Connectome Project (HCP).
 
-This project analyzes the HCP dataset to study:
-- Sexual dimorphism in brain structural connectomes
-- Relationships between brain connectivity and cognitive traits
-- Machine learning prediction of traits from connectome features
+## Features
+
+- **Data Loading**: Load and merge HCP structural/functional connectome data with traits
+- **Dimensionality Reduction**: PCA and VAE for connectome feature extraction
+- **Statistical Analysis**: Sexual dimorphism analysis with effect sizes and FDR correction
+- **Machine Learning**: Random Forest and XGBoost classifiers for trait prediction
+- **Visualization**: Publication-ready plots for connectome analysis
+
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/Sean0418/Brain-Connectome.git
+cd Brain-Connectome
+
+# Install in development mode with all dependencies
+pip install -e ".[dev,docs]"
+
+# Install pre-commit hooks
+pre-commit install
+```
+
+## Quick Start
+
+```python
+from brain_connectome import ConnectomeDataLoader, DimorphismAnalysis
+from brain_connectome.models import ConnectomeRandomForest
+
+# Load data
+loader = ConnectomeDataLoader("data/")
+data = loader.load_merged_dataset()
+
+# Analyze sexual dimorphism
+analysis = DimorphismAnalysis(data)
+features = [f"Struct_PC{i}" for i in range(1, 61)]
+results = analysis.analyze(feature_columns=features)
+
+# Get significant features
+print(analysis.get_top_features(10))
+
+# Train a classifier
+X = data[features].values
+y = (data["Gender"] == "M").astype(int).values
+
+clf = ConnectomeRandomForest()
+clf.fit(X, y, feature_names=features)
+print(f"Top biomarkers:\n{clf.get_top_features(5)}")
+```
 
 ## Project Structure
 
 ```
 Brain-Connectome/
-├── code/                           # Analysis scripts
-│   ├── pca-vae.Rmd                # PCA and VAE dimensionality reduction
-│   ├── dataloader.Rmd             # Data loading and merging utilities
-│   ├── dimorphism.Rmd             # Sexual dimorphism analysis
-│   └── final_project2.Rmd         # Main analysis report
-├── data/
-│   ├── raw/                        # Raw data files
-│   │   ├── SC/                     # Structural Connectome matrices
-│   │   ├── FC/                     # Functional Connectome matrices
-│   │   ├── TNPCA_Result/           # Tensor Network PCA coefficients
-│   │   ├── traits/                 # Subject trait data
-│   │   └── reference/              # Reference papers
-│   └── processed/                  # Generated/processed datasets
-│       ├── full_data.csv          # Merged dataset
-│       ├── master_ml_dataset.csv  # ML-ready dataset
-│       └── ...
-├── manuscript/                     # Manuscript materials
-│   └── paperdti.bib               # Bibliography
-└── output/                         # Analysis outputs
+├── brain_connectome/           # Python package
+│   ├── data/                   # Data loading and preprocessing
+│   │   ├── loader.py          # ConnectomeDataLoader
+│   │   └── preprocessing.py   # Preprocessing utilities
+│   ├── analysis/              # Analysis modules
+│   │   ├── pca.py            # PCA analysis
+│   │   ├── vae.py            # VAE dimensionality reduction
+│   │   └── dimorphism.py     # Sexual dimorphism analysis
+│   ├── models/                # Machine learning models
+│   │   └── classifiers.py    # RF and XGBoost classifiers
+│   └── visualization/         # Plotting functions
+│       └── plots.py          # Visualization utilities
+├── tests/                     # Unit tests
+├── docs/                      # Sphinx documentation
+├── data/                      # Data directory (see below)
+│   ├── raw/                   # Raw HCP data files
+│   └── processed/             # Generated datasets
+├── code/                      # Original R analysis (legacy)
+└── pyproject.toml            # Package configuration
 ```
 
-## Data Sources
+## Data
 
-The data is from the Human Connectome Project (HCP) Young Adult study:
-- **Structural Connectome (SC)**: 68×68 connectivity matrices representing white matter fiber connections
-- **Functional Connectome (FC)**: 68×68 correlation matrices from resting-state fMRI
-- **TNPCA Coefficients**: 60 principal components from Tensor Network PCA
-- **Traits**: 175+ behavioral, cognitive, and demographic measures
+The package expects HCP data in the following structure:
 
-## Analysis Workflow
+```
+data/
+├── raw/
+│   ├── SC/                    # Structural Connectome .mat files
+│   ├── FC/                    # Functional Connectome .mat files
+│   ├── TNPCA_Result/          # Tensor Network PCA coefficients
+│   └── traits/                # Subject trait CSV files
+└── processed/                 # Generated datasets
+```
 
-1. **Run `pca-vae.Rmd` first**: Performs PCA and VAE dimensionality reduction on raw connectomes
-2. **Run `dataloader.Rmd`**: Merges all data sources into a unified dataset
-3. **Run `dimorphism.Rmd`**: Analyzes sexual dimorphism in brain connectivity
-4. **Run `final_project2.Rmd`**: Full analysis with ML models and visualization
+**Data Access**: Raw data must be downloaded from [ConnectomeDB](https://db.humanconnectome.org/) after agreeing to HCP data usage terms.
 
-## Requirements
+## Development
 
-R packages required:
-- `R.matlab` - for loading .mat files
-- `dplyr`, `tidyverse` - data manipulation
-- `ggplot2` - visualization
-- `randomForest` - Random Forest models
-- `xgboost` - Gradient boosting models
-- `caret` - ML utilities
-- `torch` - for VAE (optional)
+### Running Tests
 
-## Data Access
+```bash
+pytest
+```
 
-To access the HCP data, you must:
-1. Register at [ConnectomeDB](https://db.humanconnectome.org/)
-2. Agree to the HCP data usage terms
-3. Download the relevant data files
+### Linting
 
-## References
+```bash
+ruff check .
+ruff format .
+```
 
-- Van Essen, D. C., et al. (2013). The WU-Minn Human Connectome Project: An overview. NeuroImage.
-- Zhu, H., et al. (2019). Tensor Network Factorizations. NeuroImage.
+### Building Documentation
+
+```bash
+cd docs
+make html
+```
+
+## Legacy R Code
+
+The original R analysis is preserved in the `code/` directory. The `jasa-template` git tag marks the state before Python refactoring.
+
+To checkout the original R version:
+```bash
+git checkout jasa-template
+```
 
 ## Contributors
 
 - Riley Harper
 - Sean Shen
 - Yinyu Yao
+
+## License
+
+MIT License - see LICENSE file for details.
+
+## References
+
+- Van Essen, D. C., et al. (2013). The WU-Minn Human Connectome Project: An overview. NeuroImage.
+- Zhu, H., et al. (2019). Tensor Network Factorizations. NeuroImage.
